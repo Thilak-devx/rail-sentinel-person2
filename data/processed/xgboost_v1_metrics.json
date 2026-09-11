@@ -1,0 +1,24 @@
+{
+  "model": "XGBRegressor",
+  "features": [
+    "current_arrival_delay_min",
+    "distance_to_next_km",
+    "historical_section_avg_delay_filled",
+    "day_of_week",
+    "time_of_day"
+  ],
+  "train_date_range": "2024-09-01 to 2024-09-21",
+  "validation_date_range": "2024-09-22 to 2024-09-25T00:00:00",
+  "test_date_range": "2024-09-26 to 2024-09-30",
+  "train_rows": 855486,
+  "validation_rows": 163236,
+  "test_rows": 206046,
+  "naive_test_mae_min": 9.854397,
+  "train_mae_min": 11.200346,
+  "validation_mae_min": 10.729435,
+  "test_mae_min": 10.722557,
+  "improvement_minutes": -0.86816,
+  "improvement_percent": -8.81,
+  "historical_missing_fallback": 15.0,
+  "random_state": 42
+}

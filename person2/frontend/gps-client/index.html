@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RailSentinel GPS Client</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 600px;
+            margin: 2rem auto;
+            padding: 1rem;
+        }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+        input, select {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+        button {
+            width: 100%;
+            padding: 0.75rem;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+        button:disabled {
+            background: #93c5fd;
+            cursor: not-allowed;
+        }
+        button.secondary {
+            background: #64748b;
+        }
+        .status {
+            padding: 0.75rem;
+            border-radius: 4px;
+            margin-top: 1rem;
+            font-weight: 500;
+        }
+        .status.connecting { background: #fef3c7; color: #92400e; }
+        .status.connected { background: #dcfce7; color: #166534; }
+        .status.disconnected { background: #f3f4f6; color: #374151; }
+        .status.error { background: #fee2e2; color: #991b1b; }
+        .log {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 1rem;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.875rem;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 1rem;
+        }
+        .log-entry { margin-bottom: 0.25rem; }
+        .log-entry.sent { color: #86efac; }
+        .log-entry.error { color: #fca5a5; }
+        .log-entry.info { color: #93c5fd; }
+        .log-entry.warning { color: #fcd34d; }
+        .position-display {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+        .position-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.25rem 0;
+        }
+        .position-label { color: #64748b; }
+        .position-value { font-family: monospace; }
+        .info-box {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 4px;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            font-size: 0.875rem;
+        }
+        .info-box code {
+            background: #dbeafe;
+            padding: 0.125rem 0.25rem;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <h1>RailSentinel GPS Client</h1>
+    <p>Phone-per-coach simulator for SIH26028</p>
+
+    <div class="info-box">
+        <strong>Phone Setup:</strong> Access this page from your phone on the same Wi-Fi network.
+        <br>Enter the backend URL (e.g., <code>https://abc123.ngrok-free.app</code>) in the Backend URL field.
+        <br><strong>HTTPS Required:</strong> Browser geolocation requires HTTPS on non-localhost. Use <code>ngrok http 8000</code> for HTTPS tunnel, or generate local certs with <code>mkcert</code>.
+    </div>
+
+    <div class="form-group">
+        <label for="coachId">Coach ID</label>
+        <input type="text" id="coachId" placeholder="e.g., S1, S2, B1" maxlength="10" required>
+    </div>
+
+    <div class="form-group">
+        <label for="backendUrl">Backend URL</label>
+        <input type="url" id="backendUrl" placeholder="https://abc123.ngrok-free.app" required>
+    </div>
+
+    <div class="form-group">
+        <label for="interval">Send Interval (seconds)</label>
+        <select id="interval">
+            <option value="2">2 seconds</option>
+            <option value="3" selected>3 seconds</option>
+            <option value="5">5 seconds</option>
+        </select>
+    </div>
+
+    <button id="startBtn" onclick="startTracking()">Start Tracking</button>
+    <button id="stopBtn" class="secondary" onclick="stopTracking()" disabled>Stop Tracking</button>
+
+    <div id="status" class="status disconnected">Disconnected</div>
+
+    <div id="positionDisplay" class="position-display" style="display: none;">
+        <h3>Current Position</h3>
+        <div class="position-row">
+            <span class="position-label">Coach ID:</span>
+            <span class="position-value" id="dispCoachId">-</span>
+        </div>
+        <div class="position-row">
+            <span class="position-label">Latitude:</span>
+            <span class="position-value" id="dispLat">-</span>
+        </div>
+        <div class="position-row">
+            <span class="position-label">Longitude:</span>
+            <span class="position-value" id="dispLong">-</span>
+        </div>
+        <div class="position-row">
+            <span class="position-label">Phone Speed (km/h):</span>
+            <span class="position-value" id="dispSpeed">-</span>
+        </div>
+        <div class="position-row">
+            <span class="position-label">Calculated Speed (km/h):</span>
+            <span class="position-value" id="dispCalcSpeed">-</span>
+        </div>
+        <div class="position-row">
+            <span class="position-label">Timestamp:</span>
+            <span class="position-value" id="dispTimestamp">-</span>
+        </div>
+        <div class="position-row">
+            <span class="position-label">Last Server Response:</span>
+            <span class="position-value" id="dispResponse">-</span>
+        </div>
+        <div class="position-row">
+            <span class="position-label">Last Successful Send:</span>
+            <span class="position-value" id="dispLastSend">-</span>
+        </div>
+        <div class="position-row">
+            <span class="position-label">GPS Accuracy:</span>
+            <span class="position-value" id="dispAccuracy">-</span>
+        </div>
+    </div>
+
+    <div class="log" id="log"></div>
+
+    <script>
+        // Global state
+        let watchId = null;
+        let sendInterval = null;
+        let lastPosition = null;
+        let lastSuccessfulSend = null;
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', () => {
+            log('GPS Client loaded', 'info');
+            log('Secure context: ' + window.isSecureContext, 'info');
+            document.getElementById('backendUrl').value = getSavedBackendUrl();
+            checkSecureContext();
+        });
+
+        function checkSecureContext() {
+            if (!window.isSecureContext) {
+                log('WARNING: Not a secure context. Geolocation will not work.', 'warning');
+                setStatus('ERROR: Not a secure context (HTTPS required)', 'error');
+            } else {
+                log('Secure context OK', 'info');
+            }
+        }
+
+        function getSavedBackendUrl() {
+            return localStorage.getItem('railsentinel_backend_url') || '';
+        }
+
+        function saveBackendUrl(url) {
+            localStorage.setItem('railsentinel_backend_url', url);
+        }
+
+        function log(message, type = 'info') {
+            const logEl = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const time = new Date().toISOString().split('T')[1].slice(0, -1);
+            entry.textContent = `[${time}] ${message}`;
+            logEl.insertBefore(entry, logEl.firstChild);
+            // Also log to console for debugging
+            console.log(`[${type}] ${message}`);
+        }
+
+        function setStatus(message, type) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+        }
+
+        function updatePositionDisplay(pos, response) {
+            document.getElementById('dispCoachId').textContent = pos.coach_id;
+            document.getElementById('dispLat').textContent = pos.lat.toFixed(6);
+            document.getElementById('dispLong').textContent = pos.long.toFixed(6);
+            document.getElementById('dispSpeed').textContent = pos.speed !== null ? pos.speed.toFixed(1) : 'N/A';
+            document.getElementById('dispCalcSpeed').textContent = (response && response.calculated_speed !== null) ? response.calculated_speed.toFixed(1) : 'N/A';
+            document.getElementById('dispTimestamp').textContent = pos.timestamp;
+            document.getElementById('dispResponse').textContent = response ? JSON.stringify(response) : 'pending...';
+            document.getElementById('positionDisplay').style.display = 'block';
+        }
+
+        function updateLastSend(success) {
+            lastSuccessfulSend = new Date();
+            document.getElementById('dispLastSend').textContent = lastSuccessfulSend.toISOString().split('T')[1].slice(0, -1);
+        }
+
+        async function sendPosition(position) {
+            const coachId = document.getElementById('coachId').value.trim().toUpperCase();
+            const backendUrl = document.getElementById('backendUrl').value.replace(/\/$/, '');
+
+            if (!coachId || !backendUrl) {
+                log('Cannot send: missing coach ID or backend URL', 'error');
+                return;
+            }
+
+            const payload = {
+                coach_id: coachId,
+                lat: position.coords.latitude,
+                long: position.coords.longitude,
+                speed: position.coords.speed ? (position.coords.speed * 3.6) : null,
+                timestamp: new Date(position.timestamp).toISOString()
+            };
+
+            log(`Sending position to ${backendUrl}/api/v1/position...`, 'info');
+
+            try {
+                const response = await fetch(`${backendUrl}/api/v1/position`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    log(`Sent: ${payload.lat.toFixed(6)}, ${payload.long.toFixed(6)} (speed: ${payload.speed?.toFixed(1) ?? 'N/A'} km/h)`, 'sent');
+                    updatePositionDisplay(payload, data);
+                    updateLastSend(true);
+                } else {
+                    log(`Server error ${response.status}: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (err) {
+                log(`Network error: ${err.message}`, 'error');
+            }
+        }
+
+        function onPositionUpdate(position) {
+            lastPosition = position;
+            document.getElementById('dispAccuracy').textContent = position.coords.accuracy ? position.coords.accuracy.toFixed(1) + ' m' : 'N/A';
+            log(`Position update: ${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)} (acc: ${position.coords.accuracy?.toFixed(1) ?? '?'}m)`, 'info');
+        }
+
+        function onPositionError(err) {
+            let msg = 'GPS error: ';
+            switch (err.code) {
+                case err.PERMISSION_DENIED: msg += 'Permission denied'; break;
+                case err.POSITION_UNAVAILABLE: msg += 'Position unavailable'; break;
+                case err.TIMEOUT: msg += 'Timeout'; break;
+                default: msg += err.message;
+            }
+            log(msg, 'error');
+            setStatus(msg, 'error');
+        }
+
+        function startTracking() {
+            log('Start Tracking clicked', 'info');
+
+            const coachId = document.getElementById('coachId').value.trim();
+            if (!coachId) {
+                log('ERROR: Coach ID is required', 'error');
+                setStatus('ERROR: Coach ID is required', 'error');
+                return;
+            }
+
+            if (!navigator.geolocation) {
+                log('ERROR: Geolocation not supported by this browser', 'error');
+                setStatus('ERROR: Geolocation not supported', 'error');
+                return;
+            }
+
+            if (!window.isSecureContext) {
+                log('ERROR: Not a secure context (HTTPS required for geolocation)', 'error');
+                setStatus('ERROR: HTTPS required for GPS', 'error');
+                return;
+            }
+
+            const backendUrl = document.getElementById('backendUrl').value.trim();
+            if (!backendUrl) {
+                log('ERROR: Backend URL is required', 'error');
+                setStatus('ERROR: Backend URL required', 'error');
+                return;
+            }
+            saveBackendUrl(backendUrl);
+
+            // Idempotency: if already tracking, stop first
+            if (watchId !== null) {
+                log('Already tracking, stopping previous session...', 'warning');
+                stopTracking();
+            }
+
+            document.getElementById('coachId').disabled = true;
+            document.getElementById('backendUrl').disabled = true;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+
+            setStatus('Requesting GPS permission...', 'connecting');
+            log('Requesting GPS permission...', 'info');
+
+            try {
+                watchId = navigator.geolocation.watchPosition(
+                    onPositionUpdate,
+                    onPositionError,
+                    {
+                        enableHighAccuracy: true,
+                        maximumAge: 0,
+                        timeout: 10000
+                    }
+                );
+                log('watchPosition() called successfully, watchId: ' + watchId, 'info');
+            } catch (err) {
+                log('ERROR calling watchPosition: ' + err.message, 'error');
+                setStatus('ERROR: ' + err.message, 'error');
+                // Re-enable controls on failure
+                document.getElementById('coachId').disabled = false;
+                document.getElementById('backendUrl').disabled = false;
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                return;
+            }
+
+            const intervalSec = parseInt(document.getElementById('interval').value);
+            sendInterval = setInterval(() => {
+                if (lastPosition) {
+                    sendPosition(lastPosition);
+                }
+            }, intervalSec * 1000);
+
+            setStatus('Tracking active - sending positions every ' + intervalSec + 's', 'connected');
+            log(`Started tracking for coach ${coachId.toUpperCase()}`, 'info');
+        }
+
+        function stopTracking() {
+            log('Stop Tracking clicked', 'info');
+
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                log('watchPosition cleared (watchId: ' + watchId + ')', 'info');
+                watchId = null;
+            }
+            if (sendInterval !== null) {
+                clearInterval(sendInterval);
+                sendInterval = null;
+            }
+
+            document.getElementById('coachId').disabled = false;
+            document.getElementById('backendUrl').disabled = false;
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+
+            setStatus('Disconnected', 'disconnected');
+            log('Stopped tracking', 'info');
+        }
+
+        // Restore saved backend URL on load
+        function getSavedBackendUrl() {
+            return localStorage.getItem('railsentinel_backend_url') || '';
+        }
+
+        function saveBackendUrl(url) {
+            localStorage.setItem('railsentinel_backend_url', url);
+        }
+
+        function updateLastSend(success) {
+            lastSuccessfulSend = new Date();
+            document.getElementById('dispLastSend').textContent = lastSuccessfulSend.toISOString().split('T')[1].slice(0, -1);
+        }
+
+        async function sendPosition(position) {
+            const coachId = document.getElementById('coachId').value.trim().toUpperCase();
+            const backendUrl = document.getElementById('backendUrl').value.replace(/\/$/, '');
+
+            if (!coachId || !backendUrl) {
+                log('Cannot send: missing coach ID or backend URL', 'error');
+                return;
+            }
+
+            const payload = {
+                coach_id: coachId,
+                lat: position.coords.latitude,
+                long: position.coords.longitude,
+                speed: position.coords.speed ? (position.coords.speed * 3.6) : null,
+                timestamp: new Date(position.timestamp).toISOString()
+            };
+
+            try {
+                const response = await fetch(`${backendUrl}/api/v1/position`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    log(`Sent: ${payload.lat.toFixed(6)}, ${payload.long.toFixed(6)} (speed: ${payload.speed?.toFixed(1) ?? 'N/A'} km/h)`, 'sent');
+                    updatePositionDisplay(payload, data);
+                    updateLastSend(true);
+                } else {
+                    log(`Server error ${response.status}: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (err) {
+                log(`Network error: ${err.message}`, 'error');
+            }
+        }
+
+        function updatePositionDisplay(pos, response) {
+            document.getElementById('dispCoachId').textContent = pos.coach_id;
+            document.getElementById('dispLat').textContent = pos.lat.toFixed(6);
+            document.getElementById('dispLong').textContent = pos.long.toFixed(6);
+            document.getElementById('dispSpeed').textContent = pos.speed !== null ? pos.speed.toFixed(1) : 'N/A';
+            document.getElementById('dispCalcSpeed').textContent = (response && response.calculated_speed !== null) ? response.calculated_speed.toFixed(1) : 'N/A';
+            document.getElementById('dispTimestamp').textContent = pos.timestamp;
+            document.getElementById('dispResponse').textContent = response ? JSON.stringify(response) : 'pending...';
+            document.getElementById('positionDisplay').style.display = 'block';
+        }
+
+        function updateLastSend(success) {
+            lastSuccessfulSend = new Date();
+            document.getElementById('dispLastSend').textContent = lastSuccessfulSend.toISOString().split('T')[1].slice(0, -1);
+        }
+    </script>
+</body>
+</html>

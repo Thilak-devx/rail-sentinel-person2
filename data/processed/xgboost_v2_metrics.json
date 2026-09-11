@@ -1,0 +1,35 @@
+{
+  "model": "XGBRegressor",
+  "features": [
+    "current_arrival_delay_min",
+    "distance_to_next_km",
+    "historical_section_avg_delay_filled",
+    "section_historical_median_delay_filled",
+    "section_historical_std_delay_filled",
+    "section_historical_count",
+    "current_delay_minus_section_avg_filled",
+    "train_historical_avg_delay_filled",
+    "day_of_week",
+    "time_of_day"
+  ],
+  "train_date_range": "2024-09-01 to 2024-09-21",
+  "validation_date_range": "2024-09-22 to 2024-09-25T00:00:00",
+  "test_date_range": "2024-09-26 to 2024-09-30",
+  "train_rows": 855486,
+  "validation_rows": 163236,
+  "test_rows": 206046,
+  "naive_test_mae_min": 9.854397,
+  "train_mae_min": 9.669285,
+  "validation_mae_min": 9.277627,
+  "test_mae_min": 9.300302,
+  "improvement_minutes": 0.554095,
+  "improvement_percent": 5.62,
+  "historical_fallbacks": {
+    "historical_section_avg_delay": 15.0,
+    "section_historical_median_delay": 9.0,
+    "section_historical_std_delay": 13.399174556213485,
+    "train_historical_avg_delay": 26.0
+  },
+  "random_state": 42,
+  "xgboost_version": "3.4.1"
+}

@@ -1,0 +1,25 @@
+# RailSentinel SIH26028 - Person 1: Data & Prediction Engine
+# Core dependencies for railway ETA forecasting
+
+# Web API framework
+fastapi
+uvicorn[standard]
+
+# Data manipulation
+pandas
+numpy
+
+# ML & modeling
+scikit-learn
+xgboost
+
+# Serialization
+pydantic
+
+# Utilities
+python-dotenv
+joblib
+
+# Web scraping for data collection
+beautifulsoup4
+requests
