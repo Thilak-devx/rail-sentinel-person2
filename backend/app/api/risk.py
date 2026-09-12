@@ -26,6 +26,24 @@ async def get_risk_score(segment_id: str = Query(..., description="Route segment
     )
 
 
+@router.get("/risk-scores-all")
+async def get_all_risk_scores():
+    """Return risk scores for every known segment — used by main backend polling."""
+    segments = segment_registry.list_segments()
+    results = {}
+    for seg_id in segments:
+        try:
+            assessment = await risk_service.get_risk_score(seg_id)
+            results[seg_id] = {
+                "risk_level": assessment.risk_level,
+                "source": assessment.source,
+                "last_updated": assessment.last_updated.isoformat(),
+            }
+        except Exception:
+            pass
+    return results
+
+
 @router.get("/provider-status")
 async def get_provider_status():
     return risk_service.get_provider_status()

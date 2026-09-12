@@ -46,4 +46,7 @@ def get_settings() -> dict:
         "openweather_api_key": os.getenv("OPENWEATHER_API_KEY", ""),
         "log_level": os.getenv("LOG_LEVEL", "INFO"),
         "env": os.getenv("RAILSENTRY_ENV", "development"),
+        "person2_base_url": os.getenv("PERSON2_BASE_URL", "http://127.0.0.1:8001"),
+        "risk_poll_interval_seconds": int(os.getenv("RISK_POLL_INTERVAL_SECONDS", "10")),
+        "port": int(os.getenv("PORT", "8000")),
     }

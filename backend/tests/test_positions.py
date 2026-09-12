@@ -811,37 +811,37 @@ class TestCWCProvider2026Resources:
     @pytest.mark.asyncio
     async def test_freshness_threshold_configurable(self):
         """Verify freshness threshold can be configured."""
-        provider = CWCProvider(freshness_threshold_days=7.0)
-        assert provider.freshness_threshold_days == 7.0
+        provider = CWCProvider(freshness_threshold_seconds=604800)  # 7 days
+        assert provider.freshness_threshold_seconds == 604800
         
         provider_default = CWCProvider()
-        assert provider_default.freshness_threshold_days == 30.0
+        assert provider_default.freshness_threshold_seconds == 604800
     
     @pytest.mark.asyncio
     async def test_evaluate_freshness_fresh(self):
         """Test freshness evaluation for fresh data."""
-        provider = CWCProvider(freshness_threshold_days=30.0)
+        provider = CWCProvider(freshness_threshold_seconds=86400)  # 1 day
         recent_time = datetime.now(timezone.utc)
         freshness = provider._evaluate_freshness("Rajghat", recent_time)
         
         assert freshness["status"] == "fresh"
         assert freshness["is_fresh"] is True
         assert freshness["is_stale"] is False
-        assert freshness["age_days"] is not None
-        assert freshness["age_days"] <= 30.0
+        assert freshness["age_seconds"] is not None
+        assert freshness["age_seconds"] >= 0
     
     @pytest.mark.asyncio
     async def test_evaluate_freshness_stale(self):
         """Test freshness evaluation for stale data."""
-        provider = CWCProvider(freshness_threshold_days=30.0)
-        old_time = datetime.now(timezone.utc) - timedelta(days=60)
+        provider = CWCProvider(freshness_threshold_seconds=86400)  # 1 day
+        old_time = datetime.now(timezone.utc) - timedelta(days=30)
         freshness = provider._evaluate_freshness("Rajghat", old_time)
         
         assert freshness["status"] == "stale"
         assert freshness["is_fresh"] is False
         assert freshness["is_stale"] is True
-        assert freshness["age_days"] is not None
-        assert freshness["age_days"] > 30.0
+        assert freshness["age_seconds"] is not None
+        assert freshness["age_seconds"] > 86400
     
     @pytest.mark.asyncio
     async def test_evaluate_freshness_no_timestamp(self):
@@ -851,7 +851,7 @@ class TestCWCProvider2026Resources:
         
         assert freshness["status"] == "unknown"
         assert freshness["is_unavailable"] is True
-        assert freshness["age_days"] is None
+        assert freshness["age_seconds"] is None
         assert "error" in freshness
     
     @pytest.mark.asyncio
@@ -879,7 +879,7 @@ class TestCWCProvider2026Resources:
         assert "freshness" in result.raw_data
         freshness = result.raw_data["freshness"]
         assert "status" in freshness
-        assert "age_days" in freshness
+        assert "age_seconds" in freshness
         assert "is_fresh" in freshness
         assert "is_stale" in freshness
         assert "observed_at" in freshness
@@ -906,6 +906,273 @@ class TestCWCProvider2026Resources:
         assert set(status.supported_stations) == {
             "Rajghat", "Anandpur", "Akhuapada", "Jenapur", "Alipingal", "Nimapara"
         }
+    
+    @pytest.mark.asyncio
+    async def test_fresh_cwc_observation_accepted(self):
+        """Test that fresh CWC observation is accepted and used for risk calculation."""
+        provider = CWCProvider(freshness_threshold_seconds=86400)  # 1 day
+        # Mock a fresh observation (within threshold)
+        from datetime import datetime, timezone, timedelta
+        fresh_time = datetime.now(timezone.utc) - timedelta(hours=12)
+        
+        # We can't easily mock the API call, so we test the freshness evaluation directly
+        freshness = provider._evaluate_freshness("Rajghat", fresh_time)
+        assert freshness["is_fresh"] is True
+        assert freshness["is_stale"] is False
+        assert freshness["status"] == "fresh"
+    
+    @pytest.mark.asyncio
+    async def test_stale_cwc_observation_rejected(self):
+        """Test that stale CWC observation is marked as stale."""
+        provider = CWCProvider(freshness_threshold_seconds=86400)  # 1 day
+        from datetime import datetime, timezone, timedelta
+        stale_time = datetime.now(timezone.utc) - timedelta(days=30)
+        
+        freshness = provider._evaluate_freshness("Rajghat", stale_time)
+        assert freshness["is_fresh"] is False
+        assert freshness["is_stale"] is True
+        assert freshness["status"] == "stale"
+    
+    @pytest.mark.asyncio
+    async def test_future_timestamp_treated_as_unavailable(self):
+        """Test that future timestamp is treated as invalid/unavailable, not fresh."""
+        provider = CWCProvider(freshness_threshold_seconds=86400)
+        from datetime import datetime, timezone, timedelta
+        future_time = datetime.now(timezone.utc) + timedelta(days=1)
+        
+        freshness = provider._evaluate_freshness("Rajghat", future_time)
+        # Future timestamp should be treated as invalid/unavailable, NOT fresh
+        assert freshness["is_fresh"] is False
+        assert freshness["is_stale"] is False
+        assert freshness["is_unavailable"] is True
+        assert freshness["status"] == "future"
+        assert freshness["age_seconds"] is not None
+        assert freshness["age_seconds"] < 0
+    
+    @pytest.mark.asyncio
+    async def test_invalid_timestamp_handled_safely(self):
+        """Test that None timestamp is handled safely."""
+        provider = CWCProvider(freshness_threshold_seconds=86400)
+        freshness = provider._evaluate_freshness("Rajghat", None)
+        assert freshness["is_fresh"] is False
+        assert freshness["is_stale"] is True
+        assert freshness["is_unavailable"] is True
+        assert freshness["status"] == "unknown"
+        assert freshness["age_seconds"] is None
+
+
+class TestCWCFreshnessGuardRiskEngine:
+    """Tests for CWC freshness guard in RiskEngine."""
+    
+    @pytest.fixture(autouse=True)
+    async def clear_risk_cache(self):
+        from app.services.risk_service import risk_service
+        risk_service.clear_cache()
+    
+    @pytest.fixture(autouse=True)
+    def use_cwc_provider(self, monkeypatch):
+        """Configure to use CWC provider with short freshness threshold."""
+        from app.core.config import settings
+        monkeypatch.setattr(settings, 'weather_provider', 'mock')
+        monkeypatch.setattr(settings, 'flood_provider', 'cwc')
+        monkeypatch.setattr(settings, 'cwc_max_age_seconds', 86400)  # 1 day
+        from app.services.risk_service import create_risk_service, risk_service as rs
+        rs.__init__(create_risk_service().engine.weather_provider, create_risk_service().engine.flood_provider)
+    
+    @pytest.mark.asyncio
+    async def test_stale_cwc_cannot_create_moderate_risk(self, client):
+        """Test that stale CWC data cannot create MODERATE flood risk."""
+        # This test verifies that even if water level is above warning level,
+        # stale CWC data won't produce MODERATE risk
+        # The test would need a mock CWC provider with stale data
+        # For now, we verify the logic in RiskEngine
+        from app.services.risk_service import RiskEngine
+        from app.providers.flood_provider import FloodObservation
+        from app.providers.weather_provider import WeatherObservation
+        from datetime import datetime, timezone
+        
+        # Create a mock flood observation with stale data
+        stale_flood = FloodObservation(
+            segment_id="TEST_STALE",
+            water_level_m=10.0,  # Above warning level (8.0)
+            warning_level_m=8.0,
+            danger_level_m=10.0,
+            status="normal",
+            observed_at=datetime.now(timezone.utc),
+            source="cwc",
+            raw_data={"freshness": {"is_stale": True, "is_fresh": False}}
+        )
+        
+        weather = WeatherObservation(
+            segment_id="TEST_STALE",
+            precipitation_mm=0.0,
+            visibility_m=10000.0,
+            condition="clear",
+            observed_at=datetime.now(timezone.utc),
+            source="mock",
+        )
+        
+        engine = RiskEngine(
+            weather_provider=None,  # Not used in this test
+            flood_provider=None,    # Not used in this test
+        )
+        
+        risk_level = engine._calculate_risk(stale_flood, weather)
+        # Stale flood data should not produce MODERATE/SEVERE
+        assert risk_level != "moderate"
+        assert risk_level != "severe"
+        # With clear weather and stale flood, should be NONE
+        assert risk_level == "none"
+    
+    @pytest.mark.asyncio
+    async def test_fresh_cwc_can_create_moderate_risk(self):
+        """Test that fresh CWC data can create MODERATE flood risk."""
+        from app.services.risk_service import RiskEngine
+        from app.providers.flood_provider import FloodObservation
+        from app.providers.weather_provider import WeatherObservation
+        from datetime import datetime, timezone
+        
+        fresh_flood = FloodObservation(
+            segment_id="TEST_FRESH",
+            water_level_m=9.0,  # Above warning (8.0) but below danger (10.0)
+            warning_level_m=8.0,
+            danger_level_m=10.0,
+            status="normal",
+            observed_at=datetime.now(timezone.utc),
+            source="cwc",
+            raw_data={"freshness": {"is_stale": False, "is_fresh": True}}
+        )
+        
+        weather = WeatherObservation(
+            segment_id="TEST_FRESH",
+            precipitation_mm=0.0,
+            visibility_m=10000.0,
+            condition="clear",
+            observed_at=datetime.now(timezone.utc),
+            source="mock",
+        )
+        
+        engine = RiskEngine(weather_provider=None, flood_provider=None)
+        risk_level = engine._calculate_risk(fresh_flood, weather)
+        # Fresh flood data above warning but below danger should produce MODERATE
+        assert risk_level == "moderate"
+    
+    @pytest.mark.asyncio
+    async def test_weather_risk_still_works_when_cwc_stale(self):
+        """Test that weather risk (LOW) still works when CWC is stale."""
+        from app.services.risk_service import RiskEngine
+        from app.providers.flood_provider import FloodObservation
+        from app.providers.weather_provider import WeatherObservation
+        from datetime import datetime, timezone
+        
+        stale_flood = FloodObservation(
+            segment_id="TEST_STALE",
+            water_level_m=5.0,  # Below warning
+            warning_level_m=8.0,
+            danger_level_m=10.0,
+            status="normal",
+            observed_at=datetime.now(timezone.utc),
+            source="cwc",
+            raw_data={"freshness": {"is_stale": True, "is_fresh": False}}
+        )
+        
+        # Heavy rain weather
+        heavy_rain_weather = WeatherObservation(
+            segment_id="TEST_STALE",
+            precipitation_mm=15.0,
+            visibility_m=10000.0,
+            condition="heavy_rain",
+            observed_at=datetime.now(timezone.utc),
+            source="mock",
+        )
+        
+        engine = RiskEngine(weather_provider=None, flood_provider=None)
+        risk_level = engine._calculate_risk(stale_flood, heavy_rain_weather)
+        # Weather should still produce LOW risk even with stale flood
+        assert risk_level == "low"
+        
+        # Fog weather
+        fog_weather = WeatherObservation(
+            segment_id="TEST_STALE",
+            precipitation_mm=0.0,
+            visibility_m=500.0,
+            condition="fog",
+            observed_at=datetime.now(timezone.utc),
+            source="mock",
+        )
+        
+        risk_level = engine._calculate_risk(stale_flood, fog_weather)
+        assert risk_level == "low"
+    
+    @pytest.mark.asyncio
+    async def test_severe_flood_still_blocked_when_stale(self):
+        """Test that SEVERE flood risk is also blocked when CWC is stale."""
+        from app.services.risk_service import RiskEngine
+        from app.providers.flood_provider import FloodObservation
+        from app.providers.weather_provider import WeatherObservation
+        from datetime import datetime, timezone
+        
+        stale_flood = FloodObservation(
+            segment_id="TEST_STALE_SEVERE",
+            water_level_m=15.0,  # Above danger level (10.0)
+            warning_level_m=8.0,
+            danger_level_m=10.0,
+            status="normal",
+            observed_at=datetime.now(timezone.utc),
+            source="cwc",
+            raw_data={"freshness": {"is_stale": True, "is_fresh": False}}
+        )
+        
+        weather = WeatherObservation(
+            segment_id="TEST_STALE_SEVERE",
+            precipitation_mm=0.0,
+            visibility_m=10000.0,
+            condition="clear",
+            observed_at=datetime.now(timezone.utc),
+            source="mock",
+        )
+        
+        engine = RiskEngine(weather_provider=None, flood_provider=None)
+        risk_level = engine._calculate_risk(stale_flood, weather)
+        # Stale flood data should not produce SEVERE
+        assert risk_level != "severe"
+        assert risk_level != "moderate"
+        assert risk_level == "none"
+    
+    @pytest.mark.asyncio
+    async def test_future_cwc_cannot_create_moderate_or_severe_risk(self):
+        """Test that future CWC timestamp cannot create MODERATE or SEVERE risk."""
+        from app.services.risk_service import RiskEngine
+        from app.providers.flood_provider import FloodObservation
+        from app.providers.weather_provider import WeatherObservation
+        from datetime import datetime, timezone, timedelta
+        
+        future_flood = FloodObservation(
+            segment_id="TEST_FUTURE",
+            water_level_m=15.0,  # Above danger level (10.0)
+            warning_level_m=8.0,
+            danger_level_m=10.0,
+            status="normal",
+            observed_at=datetime.now(timezone.utc),
+            source="cwc",
+            raw_data={"freshness": {"is_stale": False, "is_fresh": False, "is_unavailable": True, "status": "future"}}
+        )
+        
+        weather = WeatherObservation(
+            segment_id="TEST_FUTURE",
+            precipitation_mm=0.0,
+            visibility_m=10000.0,
+            condition="clear",
+            observed_at=datetime.now(timezone.utc),
+            source="mock",
+        )
+        
+        engine = RiskEngine(weather_provider=None, flood_provider=None)
+        risk_level = engine._calculate_risk(future_flood, weather)
+        # Future flood data should not produce MODERATE or SEVERE
+        assert risk_level != "moderate"
+        assert risk_level != "severe"
+        assert risk_level == "none"
 
 
 class TestProviderStatusEndpoint:

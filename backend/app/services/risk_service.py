@@ -68,13 +68,21 @@ class RiskEngine:
         )
     
     def _calculate_risk(self, flood: FloodObservation, weather: WeatherObservation) -> RiskLevel:
-        # Rule 1: water level >= danger level → SEVERE
-        if (flood.water_level_m is not None and flood.danger_level_m is not None 
+        # Check if flood data is stale or unavailable - if so, don't use it for MODERATE/SEVERE
+        flood_is_unusable = False
+        if flood.raw_data and isinstance(flood.raw_data, dict):
+            freshness = flood.raw_data.get("freshness", {})
+            if isinstance(freshness, dict):
+                if freshness.get("is_stale") or freshness.get("is_unavailable"):
+                    flood_is_unusable = True
+        
+        # Rule 1: water level >= danger level → SEVERE (only if flood data is fresh/available)
+        if (not flood_is_unusable and flood.water_level_m is not None and flood.danger_level_m is not None 
                 and flood.water_level_m >= flood.danger_level_m):
             return RiskLevel.SEVERE
         
-        # Rule 2: water level >= warning level → MODERATE
-        if (flood.water_level_m is not None and flood.warning_level_m is not None 
+        # Rule 2: water level >= warning level → MODERATE (only if flood data is fresh/available)
+        if (not flood_is_unusable and flood.water_level_m is not None and flood.warning_level_m is not None 
                 and flood.water_level_m >= flood.warning_level_m):
             return RiskLevel.MODERATE
         

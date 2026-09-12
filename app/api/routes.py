@@ -13,11 +13,12 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, status
 
 from app.schemas.eta import ETAPredictRequest, ETAPredictResponse
+from app.api.risk_cache import get_risk_for_segment, find_risk_by_station
 
 router = APIRouter(prefix="/predict-eta", tags=["ETA Prediction"])
 
 # ---------------------------------------------------------------------------
-# Model loading at startup
+# Model loading (lazy, on first request)
 # ---------------------------------------------------------------------------
 
 # Models are at the project root "models/" directory
@@ -27,13 +28,14 @@ model_dir = _PROJECT_ROOT / "models"
 _ltgb_p10: lgb.Booster | None = None
 _ltgb_p50: lgb.Booster | None = None
 _ltgb_p90: lgb.Booster | None = None
+_models_loaded = False
 
 
 def _load_models() -> None:
-    """Load the three LightGBM quantile models at module import."""
-    global _ltgb_p10, _ltgb_p50, _ltgb_p90
+    """Load the three LightGBM quantile models on first use (lazy loading)."""
+    global _ltgb_p10, _ltgb_p50, _ltgb_p90, _models_loaded
 
-    if _ltgb_p10 is not None and _ltgb_p50 is not None and _ltgb_p90 is not None:
+    if _models_loaded:
         return  # already loaded
 
     try:
@@ -45,21 +47,10 @@ def _load_models() -> None:
         logging.warning(f"Failed to load LightGBM models: {exc}")
         _ltgb_p10 = _ltgb_p50 = _ltgb_p90 = None
 
-
-# Load models when this module is imported
-_load_models()
+    _models_loaded = True
 
 
-# ---------------------------------------------------------------------------
-# Feature preparation (same logic as Task 23)
-# ---------------------------------------------------------------------------
-
-FALLBACKS = {
-    "historical_section_avg_delay": 15.0,
-    "section_historical_median_delay": 9.0,
-    "section_historical_std_delay": 13.399174556213485,
-    "train_historical_avg_delay": 26.0,
-}
+# NOTE: Models are now loaded lazily on first request, not at module import
 
 
 def _prepare_features(request: ETAPredictRequest) -> dict[str, float]:
@@ -125,7 +116,7 @@ def _prepare_features(request: ETAPredictRequest) -> dict[str, float]:
     description="Given a train's current state, return ETA delay prediction with "
     "80% confidence interval (P10-P90)",
 )
-def predict_eta(request: ETAPredictRequest) -> ETAPredictResponse:
+async def predict_eta(request: ETAPredictRequest) -> ETAPredictResponse:
     """POST /predict-eta endpoint.
 
     Returns predicted_delay_min, confidence_low_min (P10), confidence_high_min (P90),
@@ -183,10 +174,44 @@ def predict_eta(request: ETAPredictRequest) -> ETAPredictResponse:
         confidence_low_min = predicted_delay_min
         confidence_high_min = predicted_delay_min
 
+    # --- Integrate risk data from Person 2 cache ---
+    risk_level = None
+    risk_source = None
+    risk_last_updated = None
+    risk_stale = None
+
+    # Try to get risk data from cache using route_segment_id if available
+    # The request doesn't have route_segment_id in the current schema,
+    # so we try to match by station names if possible
+    route_segment_id = getattr(request, 'route_segment_id', None)
+
+    # Access the risk cache using the new risk_cache module
+    risk_data = None
+    if route_segment_id:
+        risk_data = await get_risk_for_segment(route_segment_id)
+    else:
+        # Try to find by station names - use current_station as fallback
+        # This is a best-effort match since we don't have segment_id in request
+        risk_data = await find_risk_by_station(request.current_station)
+
+    if risk_data:
+        risk_level = risk_data.get("risk_level")
+        risk_source = risk_data.get("source")
+        risk_last_updated = risk_data.get("last_updated")
+        # Check if risk data is stale
+        if isinstance(risk_data, dict):
+            freshness = risk_data.get("freshness", {})
+            if isinstance(freshness, dict):
+                risk_stale = freshness.get("is_stale", False)
+
     return ETAPredictResponse(
         predicted_delay_min=predicted_delay_min,
         confidence_low_min=confidence_low_min,
         confidence_high_min=confidence_high_min,
         confidence_pct=confidence_pct,
         baseline_mae_min=baseline_mae_min,
+        risk_level=risk_level,
+        risk_source=risk_source,
+        risk_last_updated=risk_last_updated,
+        risk_stale=risk_stale,
     )

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # API keys for future real providers (not used by mock)
     openweather_api_key: Optional[str] = None
     cwc_api_key: Optional[str] = None
+    # CWC freshness guard: max age in seconds for CWC observations to be considered fresh
+    # Default: 7 days (604800 seconds) - configurable for demo
+    cwc_max_age_seconds: int = 604800
 
     class Config:
         env_file = ".env"

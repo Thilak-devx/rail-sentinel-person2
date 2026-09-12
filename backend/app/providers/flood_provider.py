@@ -137,7 +137,7 @@ def create_flood_provider():
     
     if settings.flood_provider == "cwc":
         from app.providers.cwc_provider import CWCProvider
-        return CWCProvider()
+        return CWCProvider(freshness_threshold_seconds=settings.cwc_max_age_seconds)
     else:
         return MockFloodProvider()
 

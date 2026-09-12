@@ -6,6 +6,7 @@ No disaster-management or incident-detection functionality.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ from fastapi.exceptions import HTTPException
 
 from app.config import get_settings
 from app.api.routes import router
+from app.api.risk_cache import start_risk_polling, stop_risk_polling
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,20 @@ app = FastAPI(
 
 # Include ETA prediction API router
 app.include_router(router)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on application startup."""
+    await start_risk_polling()
+    logger.info("Risk polling task started")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop background tasks on application shutdown."""
+    await stop_risk_polling()
+    logger.info("Risk polling task stopped")
 
 
 @app.get("/")
@@ -63,6 +79,13 @@ async def serve_frontend(path: str):
     return FileResponse(frontend_dir / 'index.html')
 
 
+@app.get("/risk-scores")
+async def get_risk_scores():
+    """Get cached risk scores from Person 2."""
+    from app.api.risk_cache import get_risk_cache
+    return await get_risk_cache()
+
+
 @app.get("/predict-eta", response_model=None)
 async def predict_eta_legacy():
     """Legacy endpoint - redirect to the new /predict-eta/ route."""
@@ -72,3 +95,32 @@ async def predict_eta_legacy():
         status_code=307,
         detail="/predict-eta/ (POST method required)",
     )
+
+# Include ETA prediction API router
+app.include_router(router)
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+app = FastAPI(
+    title="RailSentinel — ETA Prediction Engine",
+    version="0.1.0",
+    description="Person 1 responsibility: ETA forecasting using railway schedule data",
+)
+
+from app.config import get_settings
+from app.api.routes import router
+
+logger = logging.getLogger(__name__)
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.exceptions import HTTPException
+
+from app.config import get_settings
+from app.api.routes import router
+
+logger = logging.getLogger(__name__)
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent

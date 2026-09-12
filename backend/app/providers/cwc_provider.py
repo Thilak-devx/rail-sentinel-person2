@@ -116,12 +116,12 @@ class CWCProvider(FloodProvider):
         timeout: float = 10.0,
         max_retries: int = 2,
         retry_delay: float = 1.0,
-        freshness_threshold_days: float = 30.0,
+        freshness_threshold_seconds: int = 604800,  # Default: 7 days in seconds
     ):
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.freshness_threshold_days = freshness_threshold_days
+        self.freshness_threshold_seconds = freshness_threshold_seconds
         self._base_url_value = "https://www.nwdp.nwic.gov.in"
         self._api_base = f"{self._base_url_value}/api/3/action"
         self._status = CWCProviderStatus()
@@ -387,7 +387,7 @@ class CWCProvider(FloodProvider):
         if observed_at is None:
             return {
                 "status": "unknown",
-                "age_days": None,
+                "age_seconds": None,
                 "is_fresh": False,
                 "is_stale": True,
                 "is_unavailable": True,
@@ -396,10 +396,22 @@ class CWCProvider(FloodProvider):
         
         now = datetime.now(timezone.utc)
         age = now - observed_at
-        age_days = age.total_seconds() / 86400.0
+        age_seconds = age.total_seconds()
         
-        is_fresh = age_days <= self.freshness_threshold_days
-        is_stale = age_days > self.freshness_threshold_days
+        # Future timestamps are invalid for current flood-risk decisions
+        if age_seconds < 0:
+            return {
+                "status": "future",
+                "age_seconds": int(age_seconds),
+                "is_fresh": False,
+                "is_stale": False,
+                "is_unavailable": True,
+                "error": "Observation timestamp is in the future",
+                "observed_at": observed_at.isoformat(),
+            }
+        
+        is_fresh = age_seconds <= self.freshness_threshold_seconds
+        is_stale = age_seconds > self.freshness_threshold_seconds
         is_unavailable = False
         
         if is_fresh:
@@ -411,7 +423,7 @@ class CWCProvider(FloodProvider):
         
         return {
             "status": status,
-            "age_days": round(age_days, 1),
+            "age_seconds": int(age_seconds),
             "is_fresh": is_fresh,
             "is_stale": is_stale,
             "is_unavailable": is_unavailable,
